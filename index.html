@@ -183,6 +183,12 @@ function csvParser(text){const out=[];let row=[],cell='',quoted=false;const t=St
   if(out.length<1)return[];const headers=out.shift().map(s=>s.trim());return out.map(cells=>Object.fromEntries(headers.map((h,j)=>[h,cells[j]??''])));
 }
 function dateInfo(x, id){
+  // Sheets may expose dates as serial day numbers after a formula recalculates.
+  if(typeof x==='number'&&Number.isFinite(x)&&x>=1&&x<100000){
+    const iso=new Date(Date.UTC(1899,11,30)+Math.floor(x)*86400000).toISOString().slice(0,10);
+    return {iso,display:iso,raw:iso,review:false};
+  }
+
   if(x instanceof Date && !isNaN(x))return {iso:`${x.getFullYear()}-${String(x.getMonth()+1).padStart(2,'0')}-${String(x.getDate()).padStart(2,'0')}`,display:x.toISOString().slice(0,10),review:false};
   let s=String(x??'').trim();
   const special=s.match(/^Date\((\d{4}),(\d{1,2}),(\d{1,2})/); if(special){const iso=`${special[1]}-${String(Number(special[2])+1).padStart(2,'0')}-${String(Number(special[3])).padStart(2,'0')}`; return {iso,display:iso,raw:iso,review:false};}
