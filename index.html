@@ -224,16 +224,15 @@ function normalizeRows(rows){let skipped=0;let parsed=[];
   }
   parsed.sort((a,b)=>a.Date.localeCompare(b.Date));return {data:parsed,skipped};
 }
-function loadData(rows, source){const {data,skipped}=normalizeRows(rows);if(!data.length){showStatus('Feed has no usable cleanup records. Keeping the saved data.',true);return false;}
-  // Reject a broken coordinate refresh instead of wiping a previously usable map.
-  if(records.some(validGPS)&&!data.some(validGPS)){showStatus('Live coordinates are unavailable. Keeping the last usable records and map; retrying automatically.',true);return false;}
+function loadData(rows, source, allowEmpty=false){const {data,skipped}=normalizeRows(rows);
+  if(!data.length&&!allowEmpty)return false;
   records=data;sourceName=source;$('sourceBadge').textContent=sourceName;
   const oldSite=$('siteFilter').value, oldFrom=$('startDate').value, oldTo=$('endDate').value;
   const sites=Array.from(new Set(records.map(x=>x.Location))).sort();
   $('siteFilter').innerHTML='<option value="">All sites</option>'+sites.map(s=>`<option value="${esc(s)}">${esc(s)}</option>`).join('');
   $('siteFilter').value=sites.includes(oldSite)?oldSite:'';
   $('startDate').value=oldFrom; $('endDate').value=oldTo;
-  showStatus(skipped?`${skipped} record(s) have unavailable coordinates: included in totals, omitted from the map.`:'');updateDashboard();return true;
+  showStatus('');updateDashboard();return true;
 }
 function showStatus(msg='',warn=false){$('statusMsg').textContent=msg;$('statusMsg').style.borderColor=warn?'#9b684e':'#75623f';}
 function loadDemo(){clearInterval(sheetTimer);sheetTimer=null;sheetId=null;sheetGid=null;loadData(csvParser($('embeddedActual').textContent.trim()),'Actual Coral Cartel records · snapshot');switchPage('dashboard')}
@@ -383,7 +382,7 @@ function connectGoogleSheet(){
 function refreshSheet(){
   if(!sheetId||sheetPending)return;
   sheetPending=true;
-  $('sourceBadge').textContent=hasLiveData?'Checking for updates…':'Connecting to live Google Sheet…';
+  $('sourceBadge').textContent=hasLiveData?'Checking for updates…':'Updating…';
   const connectBtn=$('sheetConnect');
   if(connectBtn){connectBtn.disabled=true;connectBtn.textContent='Loading…'}
   if(sheetScript)sheetScript.remove();
@@ -408,8 +407,9 @@ function endSheetRequest(message){
   const btn=$('sheetConnect');
   if(btn){btn.disabled=false;btn.textContent='Refresh live Sheet'}
   if(message){
-    $('sourceBadge').textContent=hasLiveData?'Live feed unavailable · showing saved records':'Live data currently unavailable';
-    showStatus(message+' Saved records remain visible; the site will automatically retry.',true);
+    $('sourceBadge').textContent='Saved data · retrying';
+    document.querySelector('.source .dot').style.background='#f9cb7e';
+    console.warn(message);showStatus('');
   }
 }
 window.CCReceive=function(response){
@@ -420,17 +420,19 @@ window.CCReceive=function(response){
   }
   try{
   const columns=response.table.cols.map(c=>c.label||c.id||'');
+  if(!['Cleanup_ID','Location','Total_lb','Latitude','Longitude'].every(k=>columns.some(c=>norm(c)===norm(k))))throw Error('Unexpected feed columns');
   const rows=response.table.rows.map(row=>Object.fromEntries(columns.map((k,i)=>{
     const cell=row.c?.[i];
     return [k,cell?.v instanceof Date?dateStr(cell.v):(cell?.v??'')];
   })));
-  if(loadData(rows,'Coral Cartel · live Google Sheet')){
+  if(loadData(rows,'Coral Cartel · live Google Sheet',rows.every(r=>Object.values(r).every(v=>String(v??'').trim()==='')))){
     hasLiveData=true;
+    document.querySelector('.source .dot').style.background='#4ce2b7';
     lastLiveUpdate=Date.now();
     try{localStorage.setItem('coral-cartel-last-good',JSON.stringify({rows,at:lastLiveUpdate}));}catch{}
     $('sourceBadge').textContent='Live data · checked '+new Date(lastLiveUpdate).toLocaleTimeString([],{hour:'numeric',minute:'2-digit'});
   }else{
-    $('sourceBadge').textContent=hasLiveData?'Feed unavailable · showing last data':'Live feed has no usable records';
+    endSheetRequest('Feed contained unusable records');return;
   }
   endSheetRequest('');
   }catch(error){endSheetRequest('The live feed format could not be read.');}
@@ -442,9 +444,9 @@ function init(){
   if(schema)schema.innerHTML=COLS.map(s=>`<span class="tag">${esc(s)}</span>`).join('');
   // Initialize Leaflet only when the Map tab is visible, so its canvas has a real size.
   loadData(csvParser($('embeddedActual').textContent.trim()),'Snapshot · 28 Oct 2026');
-  try{const cached=JSON.parse(localStorage.getItem('coral-cartel-last-good'));if(cached?.rows?.length&&cached.at>Date.parse('2026-10-28T17:07:31Z'))loadData(cached.rows,'Saved live data · '+new Date(cached.at).toLocaleString());}catch{}
+  try{const cached=JSON.parse(localStorage.getItem('coral-cartel-last-good'));if(Array.isArray(cached?.rows)&&cached.at>Date.parse('2026-10-28T17:07:31Z'))loadData(cached.rows,'Saved data',true);}catch{}
   $('sourceBadge').textContent=sourceName+' · connecting';
-  showStatus('Showing saved records. Connecting to the live Google Sheet…');
+  showStatus('');
   refreshSheet();
   sheetTimer=setInterval(refreshSheet,REFRESH_INTERVAL_MS);
   document.addEventListener('visibilitychange',()=>{
